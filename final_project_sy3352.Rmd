@@ -1,0 +1,123 @@
+---
+title: "P8106 Final Project SY3352"
+author: "Su Yan"
+date: "2026-05-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(patchwork) 
+library(ggplot2) 
+library(caret)
+library(glmnet)
+library(ranger)
+library(gbm)
+library(e1071)
+library(kernlab)
+library(pROC)
+library(pdp)
+library(vip)
+library(gtsummary) 
+```
+
+# Data setup
+```{r}
+load("severity.RData")
+set.seed(3352)
+my_dat <- dat[sample(nrow(dat), 1000), ]
+my_dat <- my_dat |> select(-id)
+
+my_dat$severity <- factor(my_dat$severity, levels = c("1", "0"),
+                          labels = c("severe", "not_severe"))
+my_dat$gender <- factor(my_dat$gender, levels = c(0, 1),
+                        labels = c("Female", "Male"))
+my_dat$race <- factor(my_dat$race, levels = c(1, 2, 3, 4),
+                      labels = c("White", "Asian", "Black", "Hispanic"))
+my_dat$smoking <- factor(my_dat$smoking, levels = c(0, 1, 2),
+                         labels = c("Never", "Former", "Current"))
+my_dat$hypertension <- factor(my_dat$hypertension, levels = c(0, 1),
+                              labels = c("No", "Yes"))
+my_dat$diabetes <- factor(my_dat$diabetes, levels = c(0, 1), 
+                          labels = c("No", "Yes"))
+my_dat$vaccine <- factor(my_dat$vaccine, levels = c(0, 1),
+                         labels = c("Unvaccinated", "Vaccinated"))
+
+set.seed(3352)
+data_split <- initial_split(my_dat, prop = 0.8, strata = severity)
+training_data <- training(data_split)
+testing_data <- testing(data_split)
+
+table(training_data$severity)
+table(testing_data$severity)
+```
+
+# EDA
+```{r}
+table_sum_stat <- my_dat |>
+  tbl_summary( by = severity, include = -c(severity),
+    statistic = list(all_continuous()  ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} ({p}%)"),
+    digits = all_continuous() ~ 1 ) |>
+  add_p() |> add_overall() |> bold_labels()
+
+table_sum_stat
+
+# Figure 1: continuous predictors
+featurePlot(x = training_data[, c("age", "height", "weight","bmi", "SBP", 
+                                  "LDL", "depression")],
+            y = training_data$severity, 
+            scales = list(x = list(relation = "free"),
+                          y = list(relation = "free")),
+            plot = "box", pch = "|")
+
+# Figure 2: categorical predictors
+p1 <- ggplot(training_data, aes(x = gender, fill = severity)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("severe" = "hotpink", "not_severe" = "blue")) +
+  labs(x = "Gender", y = "Proportion", fill = "Severity") +
+  theme(legend.position = "none")
+
+p2 <- ggplot(training_data, aes(x = race, fill = severity)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("severe" = "hotpink", "not_severe" = "blue")) +
+  labs(x = "Race", y = "Proportion", fill = "Severity") +
+  theme(legend.position = "none")
+
+p3 <- ggplot(training_data, aes(x = smoking, fill = severity)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("severe" = "hotpink", "not_severe" = "blue")) +
+  labs(x = "Smoking", y = "Proportion", fill = "Severity") +
+  theme(legend.position = "none")
+
+p4 <- ggplot(training_data, aes(x = hypertension, fill = severity)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("severe" = "hotpink", "not_severe" = "blue")) +
+  labs(x = "Hypertension", y = "Proportion", fill = "Severity") +
+  theme(legend.position = "none")
+
+p5 <- ggplot(training_data, aes(x = diabetes, fill = severity)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("severe" = "hotpink", "not_severe" = "blue")) +
+  labs(x = "Diabetes", y = "Proportion", fill = "Severity") +
+  theme(legend.position = "none")
+
+p6 <- ggplot(training_data, aes(x = vaccine, fill = severity)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("severe" = "hotpink", "not_severe" = "blue")) +
+  labs(x = "Vaccination Status", y = "Proportion", fill = "Severity") +
+  theme(legend.position = "bottom")
+
+(p1 + p2 + p3) / (p4 + p5 + p6) + plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom")
+
+
+```
+
