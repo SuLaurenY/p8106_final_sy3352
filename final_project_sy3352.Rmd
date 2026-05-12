@@ -59,12 +59,11 @@ table(testing_data$severity)
 
 # EDA
 ```{r}
-table_sum_stat <- my_dat |>
+table_sum_stat <- training_data |>
   tbl_summary( by = severity, include = -c(severity),
     statistic = list(all_continuous()  ~ "{mean} ({sd})",
                      all_categorical() ~ "{n} ({p}%)"),
-    digits = all_continuous() ~ 1 ) |>
-  add_p() |> add_overall() |> bold_labels()
+    digits = all_continuous() ~ 1 ) |> add_overall() |> bold_labels()
 
 table_sum_stat
 
@@ -160,15 +159,18 @@ max(gbmA.fit$results$ROC)
 ggplot(gbmA.fit, highlight = TRUE)
 
 # Model 4: SVM
-svmr.grid <- expand.grid(C = exp(seq(4, 10, len = 5)), 
-                         sigma = exp(seq(-12, -6, len = 4)))
+ctrl.svm <- trainControl(method = "cv", number = 10)
+
+svmr.grid <- expand.grid(C = exp(seq(6, 12, len = 15)), 
+                         sigma = exp(seq(-14, -8, len = 6)))
 
 set.seed(3352)
-svmr.fit <- train(severity ~ ., data = training_data, method = "svmRadialSigma",
-                  tuneGrid = svmr.grid, trControl = ctrl, metric = "ROC")
+svmr.fit <- train(severity ~ ., data = training_data, 
+                  method = "svmRadialSigma", tuneGrid = svmr.grid, 
+                  trControl = ctrl.svm)
 
 svmr.fit$bestTune
-max(svmr.fit$results$ROC)
+svmr.fit$results
 ggplot(svmr.fit, highlight = TRUE)
 ```
 
@@ -212,43 +214,27 @@ vip(model.glm)
 summary(gbmA.fit$finalModel, las = 2, cBars = 13, cex.names = 0.6)
 
 #Partial Dependence Plot
-pdp.glm.vaccine <- model.glm |>
-  pdp::partial(pred.var = "vaccine", prob = TRUE, train = training_data) |> 
-  utoplot(rug = TRUE, train = training_data) +
-  ggtitle("GLM: Vaccine")
-
 pdp.gbm.vaccine <- gbmA.fit |>
   pdp::partial(pred.var = "vaccine", prob = TRUE, train = training_data) |> 
-  autoplot(rug = TRUE, train = training_data) +
-  ggtitle("GBM: Vaccine")
-
-pdp.glm.sbp <- model.glm |>
-  pdp::partial(pred.var = "SBP", grid.resolution = 100, prob = TRUE, 
-               train = training_data) |> 
-  autoplot(rug = TRUE, train = training_data) +
-  ggtitle("GLM: SBP")
+  autoplot(rug = TRUE, train = training_data) + ggtitle("Vaccine")
 
 pdp.gbm.sbp <- gbmA.fit |>
   pdp::partial(pred.var = "SBP", grid.resolution = 100, prob = TRUE,
                train = training_data) |>
-  autoplot(rug = TRUE, train = training_data) +
-  ggtitle("GBM: SBP")
-
-pdp.glm.bmi <- model.glm |>
-  pdp::partial(pred.var = "bmi", grid.resolution = 100, prob = TRUE,
-               train = training_data) |>
-  autoplot(rug = TRUE, train = training_data) +
-  ggtitle("GLM: BMI")
+  autoplot(rug = TRUE, train = training_data) + ggtitle("SBP")
 
 pdp.gbm.bmi <- gbmA.fit |>
   pdp::partial(pred.var = "bmi", grid.resolution = 100, prob = TRUE,
                train = training_data) |>
-  autoplot(rug = TRUE, train = training_data) +
-  ggtitle("GBM: BMI")
+  autoplot(rug = TRUE, train = training_data) + ggtitle("BMI")
 
-gridExtra::grid.arrange(pdp.glm.vaccine, pdp.gbm.vaccine, pdp.glm.sbp,
-                        pdp.gbm.sbp, pdp.glm.bmi, pdp.gbm.bmi,
-                        nrow = 3, ncol = 2)
+pdp.gbm.age <- gbmA.fit |>
+  pdp::partial(pred.var = "age", grid.resolution = 100, prob = TRUE,
+               train = training_data) |>
+  autoplot(rug = TRUE, train = training_data) + ggtitle("Age")
+
+gridExtra::grid.arrange(pdp.gbm.vaccine, pdp.gbm.sbp, pdp.gbm.bmi,
+                        pdp.gbm.age, nrow = 2, ncol = 2)
 ```
 
 # Predictive risk score
