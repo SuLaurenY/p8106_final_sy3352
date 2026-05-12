@@ -20,6 +20,10 @@ library(pROC)
 library(pdp)
 library(vip)
 library(gtsummary) 
+
+myCol <- rainbow(25)
+myPar <- list(superpose.symbol = list(col = myCol),
+              superpose.line = list(col = myCol))
 ```
 
 # Data setup
@@ -117,7 +121,153 @@ p6 <- ggplot(training_data, aes(x = vaccine, fill = severity)) +
 
 (p1 + p2 + p3) / (p4 + p5 + p6) + plot_layout(guides = "collect") & 
   theme(legend.position = "bottom")
+```
 
+# Fit model
+```{r}
+ctrl <- trainControl(method = "cv", number = 10,
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
 
+# Model 1: simple glm
+set.seed(3352)
+model.glm <- train(severity ~ ., data = training_data, method = "glm",
+                   metric = "ROC", trControl = ctrl)
+# Model 2: elastic net
+glmnGrid <- expand.grid(alpha = seq(0, 1, length = 6),
+                        lambda = exp(seq(-12, -1, length = 20)))
+set.seed(3352)
+model.glmn <- train(severity ~ ., data = training_data, method = "glmnet",
+                    tuneGrid = glmnGrid, metric = "ROC",  trControl = ctrl)
+model.glmn$bestTune
+max(model.glmn$results$ROC)
+
+plot(model.glmn, par.settings = myPar, xTrans = function(x) log(x))
+
+# Model 3: Boosting
+gbmA.grid <- expand.grid(n.trees = c(100, 200, 500, 1000, 2000, 5000, 10000),
+                         interaction.depth = 1:5, 
+                         shrinkage = c(0.001, 0.003, 0.005),
+                         n.minobsinnode = 10)
+
+set.seed(3352)
+gbmA.fit <- train(severity ~ ., data = training_data,  method = "gbm",
+                  distribution = "adaboost", tuneGrid = gbmA.grid, 
+                  trControl = ctrl, metric = "ROC", verbose  = FALSE)
+
+gbmA.fit$bestTune
+max(gbmA.fit$results$ROC)
+ggplot(gbmA.fit, highlight = TRUE)
+
+# Model 4: SVM
+svmr.grid <- expand.grid(C = exp(seq(4, 10, len = 5)), 
+                         sigma = exp(seq(-12, -6, len = 4)))
+
+set.seed(3352)
+svmr.fit <- train(severity ~ ., data = training_data, method = "svmRadialSigma",
+                  tuneGrid = svmr.grid, trControl = ctrl, metric = "ROC")
+
+svmr.fit$bestTune
+max(svmr.fit$results$ROC)
+ggplot(svmr.fit, highlight = TRUE)
+```
+
+# Model comparison
+```{r}
+# resample
+resamp <- resamples(list(GLM = model.glm, GLMN = model.glmn, GBM = gbmA.fit, 
+                         SVM = svmr.fit))
+summary(resamp)
+bwplot(resamp)
+
+# test set
+glm.pred <- predict(model.glm, newdata = testing_data, 
+                    type = "prob")[, "severe"]
+glmn.pred <- predict(model.glmn, newdata = testing_data, 
+                     type = "prob")[, "severe"]
+gbm.pred <- predict(gbmA.fit, newdata = testing_data, type = "prob")[, "severe"]
+svm.pred <- predict(svmr.fit, newdata = testing_data, type = "prob")[, "severe"]
+
+roc.glm <- roc(testing_data$severity, glm.pred)
+roc.glmn <- roc(testing_data$severity, glmn.pred)
+roc.gbm <- roc(testing_data$severity, gbm.pred)
+roc.svm <- roc(testing_data$severity, svm.pred)
+
+plot(roc.glm, col = 1, legacy.axes = TRUE)
+plot(roc.glmn, col = 2, add = TRUE)
+plot(roc.gbm, col = 3, add = TRUE)
+plot(roc.svm, col = 4, add = TRUE)
+
+auc.values <- c(roc.glm$auc, roc.glmn$auc, roc.gbm$auc, roc.svm$auc)
+modelNames <- c("GLM", "GLMN", "GBM", "SVM")
+legend("bottomright", legend = paste0(modelNames, ": ", round(auc.values, 3)),
+       col = 1:4, lwd = 2)
+```
+
+# Variable importance
+```{r}
+# From GLM
+vip(model.glm)
+# From GBM
+summary(gbmA.fit$finalModel, las = 2, cBars = 13, cex.names = 0.6)
+
+#Partial Dependence Plot
+pdp.glm.vaccine <- model.glm |>
+  pdp::partial(pred.var = "vaccine", prob = TRUE, train = training_data) |> 
+  utoplot(rug = TRUE, train = training_data) +
+  ggtitle("GLM: Vaccine")
+
+pdp.gbm.vaccine <- gbmA.fit |>
+  pdp::partial(pred.var = "vaccine", prob = TRUE, train = training_data) |> 
+  autoplot(rug = TRUE, train = training_data) +
+  ggtitle("GBM: Vaccine")
+
+pdp.glm.sbp <- model.glm |>
+  pdp::partial(pred.var = "SBP", grid.resolution = 100, prob = TRUE, 
+               train = training_data) |> 
+  autoplot(rug = TRUE, train = training_data) +
+  ggtitle("GLM: SBP")
+
+pdp.gbm.sbp <- gbmA.fit |>
+  pdp::partial(pred.var = "SBP", grid.resolution = 100, prob = TRUE,
+               train = training_data) |>
+  autoplot(rug = TRUE, train = training_data) +
+  ggtitle("GBM: SBP")
+
+pdp.glm.bmi <- model.glm |>
+  pdp::partial(pred.var = "bmi", grid.resolution = 100, prob = TRUE,
+               train = training_data) |>
+  autoplot(rug = TRUE, train = training_data) +
+  ggtitle("GLM: BMI")
+
+pdp.gbm.bmi <- gbmA.fit |>
+  pdp::partial(pred.var = "bmi", grid.resolution = 100, prob = TRUE,
+               train = training_data) |>
+  autoplot(rug = TRUE, train = training_data) +
+  ggtitle("GBM: BMI")
+
+gridExtra::grid.arrange(pdp.glm.vaccine, pdp.gbm.vaccine, pdp.glm.sbp,
+                        pdp.gbm.sbp, pdp.glm.bmi, pdp.gbm.bmi,
+                        nrow = 3, ncol = 2)
+```
+
+# Predictive risk score
+```{r}
+risk_scores <- data.frame(ID = rownames(testing_data), 
+                          Actual = testing_data$severity,
+                          Prob_Severe = round(glm.pred, 3),
+                          Predicted = ifelse(glm.pred > 0.5, 
+                                             "severe", "not_severe"))
+
+risk_scores <- risk_scores[order(risk_scores$Prob_Severe, decreasing = TRUE), ]
+
+head(risk_scores, 10)
+tail(risk_scores, 10)
+
+# confusion matrix
+glm.class <- predict(model.glm, newdata = testing_data, type = "raw")
+
+confusionMatrix(data = glm.class, reference = testing_data$severity,
+                positive  = "severe")
 ```
 
