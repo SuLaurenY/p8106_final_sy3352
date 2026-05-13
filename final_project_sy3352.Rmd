@@ -177,39 +177,108 @@ ggplot(svmr.fit, highlight = TRUE)
 # Model comparison
 ```{r}
 # resample
-resamp <- resamples(list(GLM = model.glm, GLMN = model.glmn, GBM = gbmA.fit, 
-                         SVM = svmr.fit))
-summary(resamp)
-bwplot(resamp)
+ctrl.acc <- trainControl(method = "cv", number = 10)
 
+set.seed(3352)
+model.glm2 <- train(severity ~ ., data = training_data, method = "glm",
+                    trControl = ctrl.acc)
+set.seed(3352)
+model.glmn2 <- train(severity ~ ., data = training_data, method = "glmnet",
+                     tuneGrid = glmnGrid, trControl = ctrl.acc)
+set.seed(3352)
+gbmA.fit2 <- train(severity ~ ., data = training_data, method = "gbm",
+                   distribution = "adaboost", tuneGrid = gbmA.grid,
+                   trControl = ctrl.acc, verbose = FALSE)
+
+resamp.acc <- resamples(list(GLM  = model.glm2,
+                             GLMN = model.glmn2,
+                             GBM  = gbmA.fit2,
+                             SVM  = svmr.fit))
+summary(resamp.acc)
+bwplot(resamp.acc)
+```
+
+# Final model
+```{r}
 # test set
+glm.class <- predict(model.glm, newdata = testing_data, type = "raw")
+glmn.class <- predict(model.glmn, newdata = testing_data, type = "raw")
+gbm.class <- predict(gbmA.fit, newdata = testing_data, type = "raw")
+svm.class <- predict(svmr.fit, newdata = testing_data, type = "raw")
+
+# confusion matrix for glmn
+cm.glmn <- confusionMatrix(glmn.class, testing_data$severity,
+                           positive = "severe")
+cm.glmn
+
+# compact four-model test set summary
+cm.glm <- confusionMatrix(glm.class, testing_data$severity, 
+                          positive = "severe")
+cm.gbm <- confusionMatrix(gbm.class, testing_data$severity,
+                          positive = "severe")
+cm.svm <- confusionMatrix(svm.class, testing_data$severity, 
+                          positive = "severe")
+
+test.summary <- data.frame(
+  Model = c("GLM", "GLMN", "GBM", "SVM"),
+  Accuracy = round(c(cm.glm$overall["Accuracy"],
+                     cm.glmn$overall["Accuracy"],
+                     cm.gbm$overall["Accuracy"],
+                     cm.svm$overall["Accuracy"]), 3),
+  Sensitivity = round(c(cm.glm$byClass["Sensitivity"],
+                        cm.glmn$byClass["Sensitivity"],
+                        cm.gbm$byClass["Sensitivity"],
+                        cm.svm$byClass["Sensitivity"]), 3),
+  Specificity = round(c(cm.glm$byClass["Specificity"],
+                        cm.glmn$byClass["Specificity"],
+                        cm.gbm$byClass["Specificity"],
+                        cm.svm$byClass["Specificity"]), 3),
+  Kappa = round(c(cm.glm$overall["Kappa"],
+                  cm.glmn$overall["Kappa"],
+                  cm.gbm$overall["Kappa"],
+                  cm.svm$overall["Kappa"]), 3))
+test.summary
+
+# ROC curves
 glm.pred <- predict(model.glm, newdata = testing_data, 
                     type = "prob")[, "severe"]
 glmn.pred <- predict(model.glmn, newdata = testing_data, 
                      type = "prob")[, "severe"]
-gbm.pred <- predict(gbmA.fit, newdata = testing_data, type = "prob")[, "severe"]
-svm.pred <- predict(svmr.fit, newdata = testing_data, type = "prob")[, "severe"]
+gbm.pred <- predict(gbmA.fit, newdata = testing_data, 
+                    type = "prob")[, "severe"]
 
+# ROC objects
 roc.glm <- roc(testing_data$severity, glm.pred)
 roc.glmn <- roc(testing_data$severity, glmn.pred)
 roc.gbm <- roc(testing_data$severity, gbm.pred)
-roc.svm <- roc(testing_data$severity, svm.pred)
 
 plot(roc.glm, col = 1, legacy.axes = TRUE)
 plot(roc.glmn, col = 2, add = TRUE)
 plot(roc.gbm, col = 3, add = TRUE)
-plot(roc.svm, col = 4, add = TRUE)
+legend("bottomright",
+       legend = paste0(c("GLM", "GLMN", "GBM"), ": AUC = ",
+                       round(c(roc.glm$auc, roc.glmn$auc, roc.gbm$auc), 3)),
+       col = 1:3, lwd = 2)
+```
 
-auc.values <- c(roc.glm$auc, roc.glmn$auc, roc.gbm$auc, roc.svm$auc)
-modelNames <- c("GLM", "GLMN", "GBM", "SVM")
-legend("bottomright", legend = paste0(modelNames, ": ", round(auc.values, 3)),
-       col = 1:4, lwd = 2)
+# Predictive risk score
+```{r}
+risk_scores <- data.frame(ID = rownames(testing_data), 
+                          Actual = testing_data$severity,
+                          Prob_Severe = round(glmn.pred, 3),
+                          Predicted = ifelse(glmn.pred > 0.5, 
+                                             "severe", "not_severe"))
+
+risk_scores <- risk_scores[order(risk_scores$Prob_Severe, decreasing = TRUE), ]
+
+head(risk_scores, 10)
+tail(risk_scores, 10)
 ```
 
 # Variable importance
 ```{r}
-# From GLM
-vip(model.glm)
+# From GLMN
+vip(model.glmn)
 # From GBM
 summary(gbmA.fit$finalModel, las = 2, cBars = 13, cex.names = 0.6)
 
@@ -236,24 +305,3 @@ pdp.gbm.age <- gbmA.fit |>
 gridExtra::grid.arrange(pdp.gbm.vaccine, pdp.gbm.sbp, pdp.gbm.bmi,
                         pdp.gbm.age, nrow = 2, ncol = 2)
 ```
-
-# Predictive risk score
-```{r}
-risk_scores <- data.frame(ID = rownames(testing_data), 
-                          Actual = testing_data$severity,
-                          Prob_Severe = round(glm.pred, 3),
-                          Predicted = ifelse(glm.pred > 0.5, 
-                                             "severe", "not_severe"))
-
-risk_scores <- risk_scores[order(risk_scores$Prob_Severe, decreasing = TRUE), ]
-
-head(risk_scores, 10)
-tail(risk_scores, 10)
-
-# confusion matrix
-glm.class <- predict(model.glm, newdata = testing_data, type = "raw")
-
-confusionMatrix(data = glm.class, reference = testing_data$severity,
-                positive  = "severe")
-```
-
